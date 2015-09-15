@@ -1,14 +1,46 @@
 #!/usr/bin/env python
 
-import logging
+import argparse
 import json
+import logging
+import os
 import requests
 
 from random import randint
 
-SUBDOMAIN = ''
-API_ACCESS_KEY = ''
-NAGIOS_API = ''
+
+def _logger():
+    logger = logging.getLogger()
+    logger.setLevel(logging.WARNING)
+    logger.addHandler(logging.StreamHandler())
+
+    return logger
+
+
+def _get_args():
+    """
+    Do some shit.
+    """
+
+    parser = argparse.ArgumentParser(usage=__doc__)
+
+    parser.add_argument('--pagerduty-domain',
+                        help='Enter your pagerduty domain withouth the \
+                        .pagerduty.com bit',
+                        default=os.environ.get('PAGERDUTY_DOMAIN', None)
+                        )
+    parser.add_argument('--pagerduty-api-key',
+                        help='Enter your PD API Key',
+                        default=os.environ.get('PAGERDUTY_API_KEY', None)
+                        )
+    parser.add_argument('--nagios-api',
+                        help='Enter the API endpoint for Nagios',
+                        default=os.environ.get('NAGIOS_API_ENDPOINT', None)
+                        )
+
+    args = parser.parse_args()
+
+    return args
 
 
 def _json_dump(i):
@@ -16,6 +48,34 @@ def _json_dump(i):
 
 
 def get_incidents():
+
+    logger = _logger()
+    args = _get_args()
+
+    API_ACCESS_KEY = args.pagerduty_api_key
+    SUBDOMAIN = args.pagerduty_domain
+    NAGIOS_API = args.nagios_api
+
+    # Check Nagios first
+    r_nagios = requests.get('http://{0}/state'.format(NAGIOS_API))
+    ff = json.loads(r_nagios.text)
+
+    current_problems, no_ack_nag, betwixt = [], [], []
+
+    for host, items in ff['content'].items():
+        s_host = items['services']
+        for key, val in s_host.items():
+            if int(val['current_state']) != 0:
+                val['service'] = key
+                val['host'] = host
+                current_problems.append(val)
+
+    for incident in current_problems:
+        if int(incident['problem_has_been_acknowledged']) == 0:
+            logger.warning('Incident Unacknowledged: \n {0}'
+                           .format(_json_dump(incident)))
+            no_ack_nag.append(incident)
+
     headers = {
         'Authorization': 'Token token={0}'.format(API_ACCESS_KEY),
         'Content-type': 'application/json',
@@ -37,28 +97,8 @@ def get_incidents():
     pd_incident_list_nag_trigger = []
 
     for incident in pd_incidents_json['incidents']:
-        #print _json_dump(incident)
-        print incident['incident_number']
         if incident['trigger_type'] == 'nagios_trigger':
             pd_incident_list_nag_trigger.append(incident)
-    print 'Number of Icidents: ', len(pd_incidents_json['incidents'])
-
-    r_nagios = requests.get('{0}/state'.format(NAGIOS_API))
-    ff = json.loads(r_nagios.text)
-    #print _json_dump(ff)
-    current_problems, no_ack_nag, betwixt = [], [], []
-
-    for host, items in ff['content'].items():
-        s_host = items['services']
-        for key, val in s_host.items():
-            if int(val['current_state']) != 0:
-                val['service'] = key
-                val['host'] = host
-                current_problems.append(val)
-
-    for incident in current_problems:
-        if int(incident['problem_has_been_acknowledged']) == 0:
-            no_ack_nag.append(incident)
 
     for item in no_ack_nag:
         for pd_item in pd_incident_list_nag_trigger:
@@ -69,7 +109,9 @@ def get_incidents():
                 betwixt.append(item)
                 betwixt.append(pd_item)
 
-    print 'Results:\n\n', _json_dump(betwixt)
+    logger.warning('Matches between Nagios and PD: \n {0}'
+                   .format(_json_dump(betwixt)))
+
 
 if __name__ == '__main__':
     get_incidents()
