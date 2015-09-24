@@ -47,6 +47,34 @@ def _json_dump(i):
     return json.dumps(i, indent=2, sort_keys=True)
 
 
+def ack_alert(host, nagios_api, service=None):
+    """
+    Acknowledge the host / service problem in Nagios.
+    """
+
+    headers = {
+        'Content-type': 'application/json',
+    }
+
+    if service:
+        payload = {
+            'host': host,
+            'service': service
+        }
+    else:
+        payload = {
+            'host': host
+        }
+    print payload
+    req = requests.post(
+        'http://{0}/acknowledge_problem'.format(nagios_api),
+        headers=headers,
+        json=payload
+        )
+
+    return req
+
+
 def get_incidents():
 
     logger = _logger()
@@ -56,7 +84,6 @@ def get_incidents():
     SUBDOMAIN = args.pagerduty_domain
     NAGIOS_API = args.nagios_api
 
-    # Check Nagios first
     r_nagios = requests.get('http://{0}/state'.format(NAGIOS_API))
     ff = json.loads(r_nagios.text)
 
@@ -72,9 +99,15 @@ def get_incidents():
 
     for incident in current_problems:
         if int(incident['problem_has_been_acknowledged']) == 0:
-            logger.warning('Incident Unacknowledged: \n {0}'
-                           .format(_json_dump(incident)))
-            no_ack_nag.append(incident)
+            if int(incident['active_checks_enabled']) == 1:
+                no_ack_nag.append(incident)
+
+    if not no_ack_nag:
+        logger.warning('No current Nagios problems!')
+        os.sys.exit(0)
+    if no_ack_nag:
+        logger.warning('Nagios problems found:\t {0}'
+                       .format(len(no_ack_nag)))
 
     headers = {
         'Authorization': 'Token token={0}'.format(API_ACCESS_KEY),
@@ -82,7 +115,7 @@ def get_incidents():
     }
 
     payload = {
-        'status': 'resolved,triggered,acknowledged',
+        'status': 'triggered,acknowledged',
     }
 
     r = requests.get(
@@ -102,16 +135,23 @@ def get_incidents():
 
     for item in no_ack_nag:
         for pd_item in pd_incident_list_nag_trigger:
-            if (item['service'] in pd_item['incident_key']) is True:
+            if (item['host'] in pd_item['incident_key']) is True:
                 key = randint(0, 10000)
                 item['key'], pd_item['key'] = key, key
 
                 betwixt.append(item)
                 betwixt.append(pd_item)
 
-    logger.warning('Matches between Nagios and PD: \n {0}'
-                   .format(_json_dump(betwixt)))
+    if betwixt:
+        logger.warning('Matches between Nagios and PD: {0}'
+                       .format(_json_dump(betwixt)))
+    print len(betwixt)
 
+    # LOGIC TO CHECK FOR ACK IN PD THEN ACT ACCORDINGLY.
+
+    tee = ack_alert('test-mon-001', NAGIOS_API, service='PING-mon-test-001')
+
+    print tee.json()
 
 if __name__ == '__main__':
     get_incidents()
