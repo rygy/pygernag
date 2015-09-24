@@ -6,8 +6,6 @@ import logging
 import os
 import requests
 
-from random import randint
-
 
 def _logger():
     logger = logging.getLogger()
@@ -87,7 +85,7 @@ def get_incidents():
     r_nagios = requests.get('http://{0}/state'.format(NAGIOS_API))
     ff = json.loads(r_nagios.text)
 
-    current_problems, no_ack_nag, betwixt = [], [], []
+    current_problems, no_ack_nag = [], []
 
     for host, items in ff['content'].items():
         s_host = items['services']
@@ -133,25 +131,23 @@ def get_incidents():
         if incident['trigger_type'] == 'nagios_trigger':
             pd_incident_list_nag_trigger.append(incident)
 
+    problems = []
+
     for item in no_ack_nag:
         for pd_item in pd_incident_list_nag_trigger:
             if (item['host'] in pd_item['incident_key']) is True:
-                key = randint(0, 10000)
-                item['key'], pd_item['key'] = key, key
+                temp = item.copy()
+                temp.update(pd_item)
 
-                betwixt.append(item)
-                betwixt.append(pd_item)
+                problems.append(temp)
 
-    if betwixt:
+    if problems:
         logger.warning('Matches between Nagios and PD: {0}'
-                       .format(_json_dump(betwixt)))
-    print len(betwixt)
+                       .format(_json_dump(problems)))
 
-    # LOGIC TO CHECK FOR ACK IN PD THEN ACT ACCORDINGLY.
+#    tee = ack_alert('test-mon-001', NAGIOS_API, service='PING-mon-test-001')
 
-    tee = ack_alert('test-mon-001', NAGIOS_API, service='PING-mon-test-001')
-
-    print tee.json()
+#    print tee.json()
 
 if __name__ == '__main__':
     get_incidents()
