@@ -8,16 +8,23 @@ import requests
 
 
 def _logger():
-    logger = logging.getLogger()
-    logger.setLevel(logging.WARNING)
-    logger.addHandler(logging.StreamHandler())
+    """
+    Basic logger.
+    """
 
-    return logger
+    log = logging.getLogger()
+    log.setLevel(logging.WARNING)
+    log.addHandler(logging.StreamHandler())
+
+    return log
 
 
 def _get_args():
     """
-    Do some shit.
+    Required input:
+        pagerduty-domain
+        pagerduty api-key
+        nagios api endpoint
     """
 
     parser = argparse.ArgumentParser(usage=__doc__)
@@ -36,18 +43,21 @@ def _get_args():
                         default=os.environ.get('NAGIOS_API_ENDPOINT', None)
                         )
 
-    args = parser.parse_args()
-
-    return args
+    return parser
 
 
 def _json_dump(i):
+    """
+    pretty.
+    """
+
     return json.dumps(i, indent=2, sort_keys=True)
 
 
 def ack_alert(host, nagios_api, service=None):
     """
-    Acknowledge the host / service problem in Nagios.
+    Acknowledge a problem in Nagios.
+    Specify service AND host if ack --> service.
     """
 
     headers = {
@@ -63,7 +73,7 @@ def ack_alert(host, nagios_api, service=None):
         payload = {
             'host': host
         }
-    print payload
+
     req = requests.post(
         'http://{0}/acknowledge_problem'.format(nagios_api),
         headers=headers,
@@ -73,16 +83,16 @@ def ack_alert(host, nagios_api, service=None):
     return req
 
 
-def get_incidents():
+def nag_pd_sync_services(args, logger):
+    """
+    sync acks from PD back to Nagios.
+    """
 
-    logger = _logger()
-    args = _get_args()
+    pd_api_key = args.pagerduty_api_key
+    pd_subdomain = args.pagerduty_domain
+    nagios_api = args.nagios_api
 
-    API_ACCESS_KEY = args.pagerduty_api_key
-    SUBDOMAIN = args.pagerduty_domain
-    NAGIOS_API = args.nagios_api
-
-    r_nagios = requests.get('http://{0}/state'.format(NAGIOS_API))
+    r_nagios = requests.get('http://{0}/state'.format(nagios_api))
     ff = json.loads(r_nagios.text)
 
     current_problems, no_ack_nag = [], []
@@ -95,10 +105,11 @@ def get_incidents():
                 val['host'] = host
                 current_problems.append(val)
 
-    for incident in current_problems:
-        if int(incident['problem_has_been_acknowledged']) == 0:
-            if int(incident['active_checks_enabled']) == 1:
-                no_ack_nag.append(incident)
+    for problem in current_problems:
+        if int(problem['problem_has_been_acknowledged']) == 0:
+            if int(problem['active_checks_enabled']) == 1:
+                problem['nagios_service'] = problem['service']
+                no_ack_nag.append(problem)
 
     if not no_ack_nag:
         logger.warning('No current Nagios problems!')
@@ -108,7 +119,7 @@ def get_incidents():
                        .format(len(no_ack_nag)))
 
     headers = {
-        'Authorization': 'Token token={0}'.format(API_ACCESS_KEY),
+        'Authorization': 'Token token={0}'.format(pd_api_key),
         'Content-type': 'application/json',
     }
 
@@ -117,7 +128,7 @@ def get_incidents():
     }
 
     r = requests.get(
-        'https://{0}.pagerduty.com/api/v1/incidents'.format(SUBDOMAIN),
+        'https://{0}.pagerduty.com/api/v1/incidents'.format(pd_subdomain),
         headers=headers,
         params=payload,
     )
@@ -144,10 +155,26 @@ def get_incidents():
     if problems:
         logger.warning('Matches between Nagios and PD: {0}'
                        .format(_json_dump(problems)))
+    ack_in_nagios = None
+    for problem in problems:
+        if problem['status'] == 'acknowledged':
+            if int(problem['problem_has_been_acknowledged']) == 0:
+                ack_in_nagios = ack_alert(
+                    problem['host'],
+                    nagios_api,
+                    service=problem['nagios_service']
+                )
 
-#    tee = ack_alert('test-mon-001', NAGIOS_API, service='PING-mon-test-001')
-
-#    print tee.json()
+    if ack_in_nagios:
+        logger.warning(ack_in_nagios.json())
 
 if __name__ == '__main__':
-    get_incidents()
+
+    nag_log = _logger()
+    nag_args = _get_args().parse_args()
+
+    if None in nag_args.__dict__.values():
+        nag_log.warning(_get_args().print_help())
+        os.sys.exit(1)
+
+    nag_pd_sync_services(nag_args, nag_log)
