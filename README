@@ -1,0 +1,10 @@
+pygernag is intended to be run on set intervals to check the PagerDuty API
+for active incidents that have been acknowledged in PagerDuty but not in Nagios -
+pygernag handles the host / service acknowledgement back to Nagios.
+
+Relies on nagios-api to interact with Nagios: https://github.com/zorkian/nagios-api  
+
+Once the Nagios API has been setup, install pygernag with 'python setup.py install', and add a cron
+entry like so:
+
+* * * * * pygernag --pagerduty-domain <PagerDuty Domain Prefix> --pagerduty-api-key <PD API Key> --nagios-api <Nagios Endpoint>
