@@ -9,13 +9,13 @@ import requests
 from requests.exceptions import ConnectionError
 
 
-def _logger(log_file=None):
+def _logger(log_file=None, level=logging.WARNING):
     """
     Basic logger.
     """
 
     logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(level)
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
     if log_file:
@@ -71,7 +71,7 @@ def _json_dump(i):
     return json.dumps(i, indent=2, sort_keys=True)
 
 
-def ack_alert(host, nagios_api, service=None):
+def ack_alert(host, nagios_api, comment, service=None):
     """
     Acknowledge a problem in Nagios.
     Specify service AND host if ack --> service.
@@ -84,11 +84,13 @@ def ack_alert(host, nagios_api, service=None):
     if service:
         payload = {
             'host': host,
-            'service': service
+            'service': service,
+            'comment': comment
         }
     else:
         payload = {
-            'host': host
+            'host': host,
+            'comment': comment
         }
 
     req = requests.post(
@@ -109,6 +111,8 @@ def nag_pd_sync_services(args, logger):
     pd_subdomain = args.pagerduty_domain
     nagios_api = args.nagios_api
 
+    comment = 'Ack via PD - '
+
     try:
         r_nagios = requests.get('http://{0}/state'.format(nagios_api))
     except ConnectionError:
@@ -128,24 +132,23 @@ def nag_pd_sync_services(args, logger):
             if int(val['current_state']) != 0:
                 val['service'] = key
                 val['host'] = host
-                service_problems.append(val)
+                if int(val['problem_has_been_acknowledged']) == 0:
+                    val['nagios_service'] = val['service']
+                    service_problems.append(val)
 
-    for problem in service_problems:
-        if int(problem['problem_has_been_acknowledged']) == 0:
-            if int(problem['active_checks_enabled']) == 1:
-                problem['nagios_service'] = problem['service']
-                no_ack_nag.append(problem)
-
-    if not no_ack_nag:
+    if not service_problems:
         logger.warn('No current Nagios service problems found')
-    if no_ack_nag:
+    if service_problems:
         logger.warn('Nagios service problems found:\t {0}'
-                       .format(len(no_ack_nag)))
+                    .format(len(service_problems)))
+        logger.info(_json_dump(service_problems))
+
     if not host_problems:
         logger.warn('No current Nagios host problems found')
     if host_problems:
         logger.warn('Nagios host problems found: \t {0}'
                        .format(len(host_problems)))
+        logger.warn(_json_dump(host_problems))
 
     headers = {
         'Authorization': 'Token token={0}'.format(pd_api_key),
@@ -165,37 +168,42 @@ def nag_pd_sync_services(args, logger):
     pd_incidents = json.dumps(r.json(), indent=2, sort_keys=True)
     pd_incidents_json = json.loads(pd_incidents)
 
+    logger.info(pd_incidents)
     pd_incident_list_nag_trigger = []
 
     for incident in pd_incidents_json['incidents']:
         if incident['trigger_type'] == 'nagios_trigger':
             pd_incident_list_nag_trigger.append(incident)
 
-    service_problems = []
+    matches = []
 
     # Match service problems in Nagios to PD Incidents
-    for item in no_ack_nag:
+    for item in service_problems:
         for pd_item in pd_incident_list_nag_trigger:
             if (item['host'] in pd_item['incident_key']) is True:
                 temp = item.copy()
                 temp.update(pd_item)
 
-                service_problems.append(temp)
+                matches.append(temp)
 
-    if service_problems:
-        logger.warn('Matches Found: {0}'.format(_json_dump(service_problems)))
+    if matches:
+        logger.warn('Matches Found: {0}'.format(_json_dump(matches)))
+    if not matches:
+        logger.warn('No Matching PD Incidents found')
 
     ack_in_nagios, ack_in_nagios_host = None, None
 
     # Check service problems for an acknowledgment
     # and ack back in Nagios where appropriate
 
-    for problem in service_problems:
+    for problem in matches:
         if problem['status'] == 'acknowledged':
             if int(problem['problem_has_been_acknowledged']) == 0:
+                comment += problem['html_url']
                 ack_in_nagios = ack_alert(
                     problem['host'],
                     nagios_api,
+                    comment=comment,
                     service=problem['nagios_service']
                 )
                 logger.warn('Acknowledging Service problem in Nagios')
@@ -205,7 +213,12 @@ def nag_pd_sync_services(args, logger):
     for host in host_problems:
         for pd_item in pd_incident_list_nag_trigger:
             if host == pd_item['trigger_summary_data']['HOSTNAME']:
-                ack_in_nagios_host = ack_alert(host, nagios_api)
+                comment += pd_item['html_url']
+                ack_in_nagios_host = ack_alert(
+                    host,
+                    nagios_api,
+                    comment=comment)
+
                 logger.warn('Acknowledging Host problem in Nagios')
                 logger.warn(ack_in_nagios_host.json())
 
