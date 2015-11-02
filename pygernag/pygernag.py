@@ -181,10 +181,11 @@ def nag_pd_sync_services(args, logger):
     for item in service_problems:
         for pd_item in pd_incident_list_nag_trigger:
             if (item['host'] in pd_item['incident_key']) is True:
-                temp = item.copy()
-                temp.update(pd_item)
+                if (item['nagios_service'] in pd_item['incident_key']) is True:
+                    temp = item.copy()
+                    temp.update(pd_item)
 
-                service_matches.append(temp)
+                    service_matches.append(temp)
 
     # Match host problems in Nagios to PD Incidents
     for host in host_problems:
