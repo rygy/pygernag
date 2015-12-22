@@ -172,7 +172,7 @@ def nag_pd_sync_services(args, logger):
     pd_incident_list_nag_trigger = []
 
     for incident in pd_incidents_json['incidents']:
-        if incident['trigger_type'] == 'nagios_trigger':
+        if incident['trigger_type'] == 'nagios_trigger' or 'trigger':
             pd_incident_list_nag_trigger.append(incident)
 
     service_matches, host_matches = [], []
