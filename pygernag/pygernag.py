@@ -157,7 +157,7 @@ def nag_pd_sync_services(args, logger):
     }
 
     payload = {
-        'status': 'acknowledged',
+        'status': 'acknowledged, triggered',
     }
 
     r = requests.get(
@@ -168,6 +168,8 @@ def nag_pd_sync_services(args, logger):
 
     pd_incidents = json.dumps(r.json(), indent=2, sort_keys=True)
     pd_incidents_json = json.loads(pd_incidents)
+
+    logger.warn(pd_incidents)
 
     pd_incident_list_nag_trigger = []
 
@@ -190,9 +192,11 @@ def nag_pd_sync_services(args, logger):
     # Match host problems in Nagios to PD Incidents
     for host in host_problems:
         for pd_item in pd_incident_list_nag_trigger:
-            if host == pd_item['trigger_summary_data']['HOSTNAME']:
-                host_matches.append(pd_item)
-
+            try:
+                if host == pd_item['trigger_summary_data']['HOSTNAME']:
+                    host_matches.append(pd_item)
+            except KeyError:
+                pass
     if service_matches:
         logger.warn('Matching PD -> Service Nagios Found: {0}'.format(_json_dump(service_matches)))
     if not service_matches:
@@ -220,15 +224,18 @@ def nag_pd_sync_services(args, logger):
     # Do the same for Host problem alerts
     for host in host_problems:
         for pd_item in pd_incident_list_nag_trigger:
-            if host == pd_item['trigger_summary_data']['HOSTNAME']:
-                if pd_item['status'] == 'acknowledged':
-                    ack_in_nagios_host = ack_alert(
-                        host,
-                        nagios_api,
-                        comment=comment + pd_item['html_url'])
+            try:
+                if host == pd_item['trigger_summary_data']['HOSTNAME']:
+                    if pd_item['status'] == 'acknowledged':
+                        ack_in_nagios_host = ack_alert(
+                            host,
+                            nagios_api,
+                            comment=comment + pd_item['html_url'])
 
-                    logger.warn('Acknowledging Host problem in Nagios')
-                    logger.warn(ack_in_nagios_host.json())
+                        logger.warn('Acknowledging Host problem in Nagios')
+                        logger.warn(ack_in_nagios_host.json())
+            except KeyError:
+                pass
 
 
 def main():
