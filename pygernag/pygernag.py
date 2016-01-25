@@ -157,7 +157,7 @@ def nag_pd_sync_services(args, logger):
     }
 
     payload = {
-        'status': 'acknowledged, triggered',
+        'status': 'acknowledged',
     }
 
     r = requests.get(
