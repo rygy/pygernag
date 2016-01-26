@@ -169,7 +169,7 @@ def nag_pd_sync_services(args, logger):
     pd_incidents = json.dumps(r.json(), indent=2, sort_keys=True)
     pd_incidents_json = json.loads(pd_incidents)
 
-    logger.warn(pd_incidents)
+    #logger.warn(pd_incidents)
 
     pd_incident_list_nag_trigger = []
 
